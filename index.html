@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather from the National Weather Service</title>
+<style>
+:root{--bg:#e6eef4;--card:#ffffff;--ink:#12212e;--mute:#5d7081;--line:#d3dfe8;--accent:#1d5f8a;--chip:#eef4f8;--warn:#a8400c;--warnbg:#fff1e6;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1620;--card:#15222f;--ink:#e7eff5;--mute:#8da2b3;--line:#263747;--accent:#7cc0ea;--chip:#1c2d3c;--warn:#ffb27d;--warnbg:#3a2415;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Avenir Next","Segoe UI",system-ui,-apple-system,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;max-width:1100px;margin:0 auto;padding:20px 20px 8px}
+h1{font-size:1.25rem;margin:0;font-weight:600}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{background:var(--accent);color:var(--card);border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--card);border-color:var(--accent)}
+main{max-width:1100px;margin:0 auto;padding:8px 20px 40px;display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));align-items:start}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;min-width:0}
+.loc{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.loc h2{margin:0;font-size:1.1rem;font-weight:600}
+.link{background:none;border:0;color:var(--mute);padding:0;text-decoration:underline}
+.now{display:flex;align-items:center;gap:16px;margin:12px 0 4px}
+.temp{font-size:5rem;line-height:1;font-weight:200;letter-spacing:-.04em}
+.temp sup{font-size:1.6rem;font-weight:400;vertical-align:top;position:relative;top:.5rem;margin-left:2px}
+.now img{width:64px;height:64px;border-radius:12px}
+.cond{font-size:1.15rem;font-weight:500}
+.sub{color:var(--mute);font-size:.88rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:16px 0}
+.stat{background:var(--chip);border-radius:10px;padding:8px 12px}
+.stat b{display:block;font-weight:600}
+.alert{background:var(--warnbg);color:var(--warn);border-left:4px solid var(--warn);border-radius:6px;padding:8px 12px;margin:12px 0;font-size:.92rem}
+.fc{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-top:8px}
+.day{flex:0 0 104px;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center;font-size:.85rem}
+.day img{width:44px;height:44px;border-radius:8px}
+.day .t{font-size:1.2rem;font-weight:600}
+.day .s{color:var(--mute);font-size:.75rem;min-height:2.4em}
+.pop{color:var(--accent);font-size:.75rem;font-weight:600}
+.sec{margin-top:16px}
+.sec svg{width:100%;height:auto;display:block}
+.sec img{width:100%;max-width:560px;border-radius:10px;display:block;margin-top:8px}
+details summary{cursor:pointer;color:var(--mute);font-size:.88rem}
+#status{max-width:1100px;margin:0 auto;padding:0 20px 8px}
+#status:empty{padding:0}
+.prompt h2{margin:0 0 4px;font-size:1.1rem}
+.row{display:flex;gap:8px;margin:12px 0}
+select{flex:1;font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:0}
+select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input{flex:1;font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:0}
+.res{display:grid;gap:6px}
+.res button{text-align:left}
+.err{color:var(--warn)}
+footer{max-width:1100px;margin:0 auto;padding:0 20px 28px;color:var(--mute);font-size:.82rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>Weather from the National Weather Service</h1>
+  <div class="tools">
+    <button id="uF">°F</button><button id="uC">°C</button>
+    <button id="gps">Use my location</button>
+    <button id="refresh">Refresh</button>
+  </div>
+</header>
+<div id="status" class="sub" role="status"></div>
+<main id="app"></main>
+<footer>Data from api.weather.gov and radar.weather.gov (U.S. locations only). Sunrise and sunset are calculated. Place search by Open-Meteo.</footer>
+
+<script>
+const DEFAULT = {name:"Londonderry, NH", lat:42.8651, lon:-71.3739};
+let unit = "F", second = null, picking = false, results = [], searchMsg = "";
+const cache = {};
+try { unit = localStorage.getItem("nwsUnit") || "F"; } catch(e){}
+try { second = JSON.parse(localStorage.getItem("nwsSecond")); } catch(e){}
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const J = async u => { const r = await fetch(u, {headers:{Accept:"application/geo+json"}}); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); };
+const save = (k,v) => { try{ v==null ? localStorage.removeItem(k) : localStorage.setItem(k,typeof v==="string"?v:JSON.stringify(v)); }catch(e){} };
+
+const fromC = c => unit==="F" ? c*9/5+32 : c;
+const fromF = f => unit==="C" ? (f-32)*5/9 : f;
+const deg = v => Math.round(v) + "°";
+const compass = d => d==null ? "" : ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(d/22.5)%16];
+
+async function loadLoc(loc){
+  const key = loc.lat+","+loc.lon;
+  const p = (await J(`https://api.weather.gov/points/${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`)).properties;
+  const [fc, st, al, hr] = await Promise.all([
+    J(p.forecast), J(p.observationStations),
+    J(`https://api.weather.gov/alerts/active?point=${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`).catch(()=>({features:[]})),
+    J(p.forecastHourly).catch(()=>null)
+  ]);
+  let obs = null;
+  for(const s of st.features.slice(0,4)){
+    try{
+      const o = (await J(s.id+"/observations/latest")).properties;
+      if(o.temperature && o.temperature.value!=null){ o.station = s.properties.name; obs = o; break; }
+    }catch(e){}
+  }
+  if(loc.gps && p.relativeLocation){ const r = p.relativeLocation.properties; loc.name = `${r.city}, ${r.state}`; save("nwsSecond", loc); }
+  cache[key] = {periods: fc.properties.periods.slice(0,10), obs, alerts: al.features,
+    hourly: hr ? hr.properties.periods.slice(0,24) : null, radar: p.radarStation, tz: p.timeZone,
+    sun: sunInfo(loc.lat, loc.lon, p.timeZone), stamp: Date.now()};
+}
+
+function sunInfo(lat, lon, tz){
+  try{
+    const [Y,Mo,D] = new Date().toLocaleDateString("en-CA",{timeZone:tz}).split("-").map(Number);
+    const N = Math.floor((Date.UTC(Y,Mo-1,D)-Date.UTC(Y,0,0))/864e5);
+    const r = Math.PI/180, mod = (a,m)=>((a%m)+m)%m;
+    const calc = rising => {
+      const lh = lon/15, t = N+((rising?6:18)-lh)/24, M = 0.9856*t-3.289;
+      const L = mod(M+1.916*Math.sin(M*r)+0.020*Math.sin(2*M*r)+282.634,360);
+      let RA = mod(Math.atan(0.91764*Math.tan(L*r))/r,360);
+      RA += Math.floor(L/90)*90-Math.floor(RA/90)*90; RA /= 15;
+      const sd = 0.39782*Math.sin(L*r), cd = Math.cos(Math.asin(sd));
+      const ch = (Math.cos(90.833*r)-sd*Math.sin(lat*r))/(cd*Math.cos(lat*r));
+      if(ch>1||ch<-1) return null;
+      const H = (rising ? 360-Math.acos(ch)/r : Math.acos(ch)/r)/15;
+      return Date.UTC(Y,Mo-1,D)+mod(H+RA-0.06571*t-6.622-lh,24)*36e5;
+    };
+    const a = calc(true), b = calc(false);
+    const f = ms => new Date(ms).toLocaleTimeString([], {hour:"numeric",minute:"2-digit",timeZone:tz});
+    let len = null;
+    if(a!=null && b!=null){ const m = Math.round(mod(b-a,864e5)/6e4); len = Math.floor(m/60)+"h "+(m%60)+"m"; }
+    return {rise: a!=null ? f(a) : null, set: b!=null ? f(b) : null, len};
+  }catch(e){ return null; }
+}
+
+function hourlyHTML(d){
+  const h = d.hourly; if(!h || !h.length) return "";
+  const W=480, H=150, pl=30, pr=6, pt=10, pb=24, ph=H-pt-pb, bw=(W-pl-pr)/h.length;
+  const ts = h.map(x=>fromF(x.temperature));
+  const mn = Math.floor(Math.min(...ts)-2), mx = Math.ceil(Math.max(...ts)+2);
+  const X = i => pl+bw*i+bw/2, Y = t => pt+ph*(1-(t-mn)/(mx-mn));
+  const hr = x => new Date(x.startTime).toLocaleTimeString([], {hour:"numeric",timeZone:d.tz});
+  const bars = h.map((x,i)=>{
+    const p = (x.probabilityOfPrecipitation && x.probabilityOfPrecipitation.value) || 0, bh = ph*p/100;
+    return `<rect x="${(pl+bw*i+1).toFixed(1)}" y="${(pt+ph-bh).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${bh.toFixed(1)}" rx="2" style="fill:var(--accent);opacity:.3"><title>${hr(x)}: ${deg(ts[i])}, ${p}% rain</title></rect>`;
+  }).join("");
+  const line = ts.map((t,i)=>`${i?"L":"M"}${X(i).toFixed(1)},${Y(t).toFixed(1)}`).join("");
+  const lbl = h.map((x,i)=> i%4===0 ? `<text x="${X(i).toFixed(1)}" y="${H-6}" text-anchor="middle">${hr(x)}</text>` : "").join("");
+  return `<div class="sec"><div class="sub">Next 24 hours</div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hourly temperature and chance of rain" font-size="11" style="fill:var(--mute)"><line x1="${pl}" x2="${W-pr}" y1="${pt+ph}" y2="${pt+ph}" style="stroke:var(--line)"/>${bars}<path d="${line}" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-linejoin:round"/><text x="${pl-4}" y="${pt+8}" text-anchor="end">${mx}°</text><text x="${pl-4}" y="${pt+ph}" text-anchor="end">${mn}°</text>${lbl}</svg><div class="sub">The line is temperature. The bars are chance of rain, from 0 to 100%.</div></div>`;
+}
+
+function radarHTML(d){
+  if(!d.radar) return "";
+  const id = esc(d.radar);
+  return `<details class="sec" open><summary>Radar from ${id}</summary><a href="https://radar.weather.gov/station/${id.toLowerCase()}/standard" target="_blank" rel="noopener"><img src="https://radar.weather.gov/ridge/standard/${id}_loop.gif?_=${d.stamp}" alt="Radar loop from ${id}" onerror="this.replaceWith(document.createTextNode('Radar image unavailable right now.'))"></a></details>`;
+}
+
+function useGPS(){
+  const s = $("status");
+  if(!navigator.geolocation){ s.textContent = "Your browser doesn’t support location."; return; }
+  s.textContent = "Finding your location…";
+  navigator.geolocation.getCurrentPosition(pos => {
+    s.textContent = "";
+    second = {name:"My location", lat:+pos.coords.latitude.toFixed(4), lon:+pos.coords.longitude.toFixed(4), gps:true};
+    picking = false; save("nwsSecond", second); render(); refreshLoc(second);
+  }, err => {
+    s.textContent = err.code===1 ? "Location access is blocked. Allow it in your browser’s site settings, or search for a place instead." : "Couldn’t get your location. Search for a place instead.";
+  }, {timeout:10000});
+}
+
+function currentHTML(d){
+  const o = d.obs, first = d.periods[0];
+  if(!o) return `<div class="now"><div><div class="temp">${deg(fromF(first.temperature))}<sup>${unit}</sup></div></div><div><div class="cond">${esc(first.shortForecast)}</div><div class="sub">Forecast value; no recent station observation</div></div></div>`;
+  const v = x => x && x.value!=null ? x.value : null;
+  const feels = v(o.heatIndex) ?? v(o.windChill);
+  const wind = v(o.windSpeed), gust = v(o.windGust);
+  const fmtWind = k => unit==="F" ? Math.round(k*0.621371)+" mph" : Math.round(k)+" km/h";
+  const stats = [
+    feels!=null ? ["Feels like", deg(fromC(feels))] : null,
+    v(o.relativeHumidity)!=null ? ["Humidity", Math.round(v(o.relativeHumidity))+"%"] : null,
+    wind!=null ? ["Wind", (wind<1?"Calm":compass(v(o.windDirection))+" "+fmtWind(wind))+(gust?`, gusts ${fmtWind(gust)}`:"")] : null,
+    v(o.dewpoint)!=null ? ["Dew point", deg(fromC(v(o.dewpoint)))] : null,
+    v(o.barometricPressure)!=null ? ["Pressure", unit==="F" ? (v(o.barometricPressure)*0.0002953).toFixed(2)+" inHg" : Math.round(v(o.barometricPressure)/100)+" hPa"] : null,
+    v(o.visibility)!=null ? ["Visibility", unit==="F" ? (v(o.visibility)/1609.34).toFixed(1)+" mi" : (v(o.visibility)/1000).toFixed(1)+" km"] : null,
+    d.sun && d.sun.rise ? ["Sunrise", d.sun.rise] : null,
+    d.sun && d.sun.set ? ["Sunset", d.sun.set] : null,
+    d.sun && d.sun.len ? ["Daylight", d.sun.len] : null
+  ].filter(Boolean);
+  const time = new Date(o.timestamp).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
+  return `<div class="now">${o.icon?`<img src="${esc(o.icon)}" alt="">`:""}
+    <div class="temp">${deg(fromC(o.temperature.value))}<sup>${unit}</sup></div>
+    <div><div class="cond">${esc(o.textDescription||first.shortForecast)}</div><div class="sub">${esc(o.station)}, ${time}</div></div></div>
+    <div class="stats">${stats.map(s=>`<div class="stat"><span class="sub">${s[0]}</span><b>${esc(s[1])}</b></div>`).join("")}</div>`;
+}
+
+function cardHTML(loc, removable){
+  const d = cache[loc.lat+","+loc.lon];
+  const head = `<div class="loc"><h2>${esc(loc.name)}</h2>${removable?'<button class="link" data-act="remove">Remove</button>':""}</div>`;
+  if(!d) return `<section class="card">${head}<p class="sub">Loading…</p></section>`;
+  if(d.error) return `<section class="card">${head}<p class="err">${esc(d.error)}</p></section>`;
+  const alerts = d.alerts.slice(0,3).map(a=>`<div class="alert"><b>${esc(a.properties.event)}</b>${a.properties.headline?"<br>"+esc(a.properties.headline):""}</div>`).join("");
+  const days = d.periods.map(p=>`<div class="day"><b>${esc(p.name)}</b><br><img src="${esc(p.icon)}" alt=""><div class="t">${deg(fromF(p.temperature))}</div><div class="s">${esc(p.shortForecast)}</div><div class="pop">${p.probabilityOfPrecipitation && p.probabilityOfPrecipitation.value!=null ? p.probabilityOfPrecipitation.value+"% rain" : "&nbsp;"}</div></div>`).join("");
+  return `<section class="card">${head}${alerts}${currentHTML(d)}<div class="sub">Forecast</div><div class="fc">${days}</div>${hourlyHTML(d)}${radarHTML(d)}</section>`;
+}
+
+function promptHTML(){
+  if(!picking) return `<section class="card prompt"><h2>Add a second location</h2><p class="sub">Compare another U.S. place side by side.</p><div class="row"><button class="primary" data-act="add">Add location</button><button data-act="gps">Use my location</button></div></section>`;
+  return `<section class="card prompt"><h2>Which location do you want to add?</h2><p class="sub">Enter a U.S. city, like “Concord, NH”.</p>
+    <div class="row"><input id="q" placeholder="City, State" autofocus><button class="primary" data-act="search">Search</button><button data-act="cancel">Cancel</button></div>
+    ${searchMsg?`<p class="sub">${esc(searchMsg)}</p>`:""}
+    ${results.length?`<div class="row"><select id="sel" aria-label="Matching locations"><option value="">Select a location…</option>${results.map((r,i)=>`<option value="${i}">${esc(r.name)}</option>`).join("")}</select><button class="primary" data-act="pick">Confirm</button></div>`:""}</section>`;
+}
+
+function render(){
+  $("uF").className = unit==="F"?"on":""; $("uC").className = unit==="C"?"on":"";
+  $("app").innerHTML = cardHTML(DEFAULT,false) + (second ? cardHTML(second,true) : promptHTML());
+  const q = $("q"); if(q){ ($("sel")||q).focus(); q.onkeydown = e => { if(e.key==="Enter") search(); }; }
+}
+
+async function refreshLoc(loc){
+  try{ await loadLoc(loc); }
+  catch(e){ cache[loc.lat+","+loc.lon] = {error:"Couldn’t load NWS data for this location. The NWS covers U.S. locations only; check your connection and try Refresh."}; }
+  render();
+}
+
+async function search(){
+  const raw = $("q").value.trim(); if(!raw) return;
+  const [city, rest] = raw.split(",").map(s=>s.trim());
+  searchMsg = "Searching…"; results = []; render();
+  try{
+    const r = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=20&language=en&format=json`)).json();
+    let list = (r.results||[]).filter(x=>x.country_code==="US");
+    if(rest) { const f = list.filter(x=>(x.admin1||"").toLowerCase().startsWith(rest.toLowerCase()) || ABBR[rest.toUpperCase()]===x.admin1); if(f.length) list = f; }
+    results = list.slice(0,6).map(x=>({name:`${x.name}, ${x.admin1||""}${x.admin2?" ("+x.admin2+")":""}`.replace(/, $/,""), shortName:`${x.name}, ${ABBR_REV[x.admin1]||x.admin1||""}`.replace(/, $/,""), lat:x.latitude, lon:x.longitude}));
+    searchMsg = results.length ? "Choose a location:" : "No U.S. match found. Try “City, ST”.";
+  }catch(e){ searchMsg = "Search failed. Check your connection and try again."; }
+  render();
+}
+
+const ABBR = {NH:"New Hampshire",MA:"Massachusetts",ME:"Maine",VT:"Vermont",CT:"Connecticut",RI:"Rhode Island",NY:"New York",NJ:"New Jersey",PA:"Pennsylvania",CA:"California",TX:"Texas",FL:"Florida",WA:"Washington",OR:"Oregon",IL:"Illinois",OH:"Ohio",MI:"Michigan",GA:"Georgia",NC:"North Carolina",VA:"Virginia",CO:"Colorado",AZ:"Arizona"};
+const ABBR_REV = Object.fromEntries(Object.entries(ABBR).map(([a,n])=>[n,a]));
+
+$("app").addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  const act = b.dataset.act;
+  if(act==="add"){ picking = true; results = []; searchMsg = ""; render(); }
+  else if(act==="cancel"){ picking = false; render(); }
+  else if(act==="search"){ search(); }
+  else if(act==="gps"){ useGPS(); }
+  else if(act==="pick"){
+    const v = $("sel").value;
+    if(v===""){ searchMsg = "Choose a location from the list, then confirm."; render(); return; }
+    const r = results[+v];
+    second = {name:r.shortName, lat:r.lat, lon:r.lon}; picking = false;
+    save("nwsSecond", second); render(); refreshLoc(second);
+  }
+  else if(act==="remove"){ second = null; save("nwsSecond", null); render(); }
+});
+$("uF").onclick = () => { unit="F"; save("nwsUnit","F"); render(); };
+$("uC").onclick = () => { unit="C"; save("nwsUnit","C"); render(); };
+$("gps").onclick = useGPS;
+$("refresh").onclick = () => { for(const k in cache) delete cache[k]; render(); refreshLoc(DEFAULT); if(second) refreshLoc(second); };
+
+render(); refreshLoc(DEFAULT); if(second) refreshLoc(second);
+</script>
+</body>
+</html>
